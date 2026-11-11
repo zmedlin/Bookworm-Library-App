@@ -4,8 +4,9 @@ export type RootStackParamList = {
   Tabs: undefined;
   ConfirmBook: { isbn13?: string; bookId?: string };
   BookDetail: { bookId: string };
-  Lend: { bookId: string };
-  BorrowerDetail: { borrowerId: string };
+  Lend: { bookId: string; borrowerId?: string };
+  /** Without borrowerId: add a new borrower. */
+  BorrowerDetail: { borrowerId?: string };
 };
 
 export type TabParamList = {

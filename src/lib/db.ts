@@ -82,13 +82,18 @@ export async function deleteBook(id: string): Promise<void> {
 
 // ---------- Borrowers ----------
 
-export type BorrowerWithCount = Borrower & { open_loans: number };
+export type BorrowerWithCount = Borrower & { open_loans: number; last_lent: string | null };
 
+/** All saved borrowers, alphabetical, with how many books each has out. */
 export async function listBorrowers(): Promise<BorrowerWithCount[]> {
   const rows = check(
-    await supabase.from('borrowers').select('*, loans(returned_at)').order('name'),
-  ) as (Borrower & { loans: { returned_at: string | null }[] })[];
-  return rows.map(({ loans, ...b }) => ({ ...b, open_loans: loans.filter((l) => !l.returned_at).length }));
+    await supabase.from('borrowers').select('*, loans(returned_at, lent_at)').order('name'),
+  ) as (Borrower & { loans: { returned_at: string | null; lent_at: string }[] })[];
+  return rows.map(({ loans, ...b }) => ({
+    ...b,
+    open_loans: loans.filter((l) => !l.returned_at).length,
+    last_lent: loans.map((l) => l.lent_at).sort().pop() ?? null,
+  }));
 }
 
 export async function getBorrower(id: string): Promise<Borrower | null> {
@@ -119,12 +124,15 @@ export async function deleteBorrower(id: string): Promise<void> {
 
 // ---------- Loans ----------
 
-export async function lendBook(bookId: string, borrowerId: string, dueDate: string): Promise<void> {
-  check(
+export async function lendBook(bookId: string, borrowerId: string, dueDate: string): Promise<string> {
+  const row = check(
     await supabase
       .from('loans')
-      .insert({ book_id: bookId, borrower_id: borrowerId, lent_at: todayIso(), due_date: dueDate }),
-  );
+      .insert({ book_id: bookId, borrower_id: borrowerId, lent_at: todayIso(), due_date: dueDate })
+      .select('id')
+      .single(),
+  ) as { id: string };
+  return row.id;
 }
 
 export async function markReturned(loanId: string): Promise<void> {
@@ -175,4 +183,30 @@ export async function saveSettings(s: Omit<Settings, 'owner_id'>): Promise<void>
   const { data: u } = await supabase.auth.getUser();
   if (!u.user) throw new Error('Not signed in.');
   check(await supabase.from('settings').upsert({ owner_id: u.user.id, ...s }));
+}
+
+// ---------- Email (via the "mailer" server function) ----------
+
+export type EmailAction = 'test' | 'lent' | 'remind';
+
+/** Sends an email through the server. Returns the address it was sent to. */
+export async function sendEmail(action: EmailAction, loanId?: string): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('mailer', { body: { action, loan_id: loanId } });
+  if (error) {
+    let msg = error.message;
+    try {
+      const body = await (error as any).context?.json?.();
+      if (body?.error) msg = body.error;
+    } catch {}
+    if (/Failed to send a request|not found/i.test(msg)) msg = 'The email service isn’t set up yet (the “mailer” function).';
+    throw new Error(msg);
+  }
+  return data?.to ?? '';
+}
+
+export async function getOpenLoanId(bookId: string): Promise<string | null> {
+  const r = check(
+    await supabase.from('loans').select('id').eq('book_id', bookId).is('returned_at', null).maybeSingle(),
+  ) as { id: string } | null;
+  return r?.id ?? null;
 }

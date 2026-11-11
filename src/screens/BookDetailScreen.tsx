@@ -10,6 +10,7 @@ import {
   getBookStatus,
   loansForBook,
   markReturned,
+  sendEmail,
   statusOf,
 } from '../lib/db';
 import { dueLabel, formatDate, formatTimestamp, todayIso } from '../lib/dates';
@@ -22,6 +23,7 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
   const [history, setHistory] = useState<LoanWithBorrower[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [reminding, setReminding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +44,7 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
 
   const status = statusOf(book);
   const pastLoans = history.filter((l) => l.returned_at);
+  const openLoan = history.find((l) => !l.returned_at);
 
   function confirmReturn() {
     Alert.alert('Mark as returned?', `${book!.borrower_name} returned “${book!.title}”.`, [
@@ -74,6 +77,27 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
     }, book!.lent_at ?? todayIso());
   }
 
+  function confirmRemind() {
+    Alert.alert('Send a reminder?', `Email ${book!.borrower_name} (${book!.borrower_email}) about “${book!.title}”.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Send',
+        onPress: async () => {
+          setReminding(true);
+          try {
+            await sendEmail('remind', book!.open_loan_id!);
+            await load();
+            Alert.alert('Reminder sent');
+          } catch (e) {
+            Alert.alert('Couldn’t send', e instanceof Error ? e.message : String(e));
+          } finally {
+            setReminding(false);
+          }
+        },
+      },
+    ]);
+  }
+
   function confirmDelete() {
     Alert.alert('Delete this book?', 'It and its loan history will be removed from your library.', [
       { text: 'Cancel', style: 'cancel' },
@@ -95,7 +119,10 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.pad}>
       <View style={[s.row, { alignItems: 'flex-start' }]}>
-        <Cover uri={book.cover_url} size={90} />
+        <Pressable onPress={() => navigation.navigate('ConfirmBook', { bookId })}>
+          <Cover uri={book.cover_url} size={90} />
+          {!book.cover_url && <Text style={[s.muted, { fontSize: 11, textAlign: 'center', color: colors.primary }]}>Add cover</Text>}
+        </Pressable>
         <View style={{ flex: 1, marginLeft: 14 }}>
           <Text style={s.h1}>{book.title}</Text>
           {!!book.authors.length && <Text style={[s.body, { marginTop: 4 }]}>{book.authors.join(', ')}</Text>}
@@ -124,7 +151,13 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
           <Text style={[s.body, status === 'overdue' && { color: colors.overdue, fontWeight: '700' }]}>
             Due {formatDate(book.due_date!)} ({dueLabel(book.due_date!)})
           </Text>
+          {openLoan?.last_reminder_at && (
+            <Text style={s.muted}>
+              Last reminded {formatTimestamp(openLoan.last_reminder_at)} ({openLoan.reminder_count} so far)
+            </Text>
+          )}
           <Button title="Mark returned" onPress={confirmReturn} loading={busy} style={{ marginTop: 10 }} />
+          <Button title="Send reminder email" variant="secondary" onPress={confirmRemind} loading={reminding} />
           <Button title="Change due date" variant="secondary" onPress={editDueDate} />
         </Card>
       )}

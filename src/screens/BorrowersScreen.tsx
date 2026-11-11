@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Empty, Loading, colors, s } from '../components/ui';
@@ -10,6 +11,16 @@ export default function BorrowersScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable onPress={() => navigation.navigate('BorrowerDetail', {})} hitSlop={12} style={{ marginRight: 16 }}>
+          <Ionicons name="person-add-outline" size={24} color={colors.primary} />
+        </Pressable>
+      ),
+    });
+  }, [navigation]);
 
   const load = useCallback(async () => {
     try {
@@ -47,7 +58,7 @@ export default function BorrowersScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />
         }
-        ListEmptyComponent={<Empty text="No borrowers yet. They’re added when you lend a book." />}
+        ListEmptyComponent={<Empty text="No saved borrowers yet. Tap the + button to add someone, or add them when you lend a book." />}
         renderItem={({ item }) => (
           <Pressable onPress={() => navigation.navigate('BorrowerDetail', { borrowerId: item.id })} style={s.listRow}>
             <View style={{ flex: 1 }}>

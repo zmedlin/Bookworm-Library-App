@@ -12,9 +12,17 @@ and track who has what. Data is stored in Supabase.
 - **Lend**: pick an earlier borrower or add a new one (name, email, student/friend), due date
 - **Loans**: everything lent out, overdue first
 - **Borrowers**: contact details, current and past loans
-- **Settings**: loan length, reminder rules, email sign-off, sign out
+- **Settings**: loan length, reminder rules, sender name, email sign-off, test email, sign out
+- **Saved borrowers**: pick from a list when lending; add people ahead of time from the Borrowers tab
+- **Covers**: if none is found, search online for covers or take/choose a photo (stored in Supabase Storage)
+- **Email** (Supabase function `mailer`, sent from Gmail): loan confirmation, "Send reminder" button,
+  and automatic daily reminders (before due, on due date, then every N days while overdue)
 
-Not yet: sending emails (next step: Supabase Edge Functions + daily schedule).
+## Server pieces
+- `supabase/01_schema.sql`, `supabase/02_email_and_covers.sql`: run once each in the SQL Editor
+- `supabase/functions/mailer/index.ts`: Edge Function (deploy with JWT verification **off**)
+  - Secrets: `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `CRON_SECRET`
+- `.github/workflows/daily-reminders.yml`: calls the function every morning; needs repo secret `CRON_SECRET`
 
 ## Project layout
 ```

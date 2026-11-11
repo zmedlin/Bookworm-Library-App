@@ -1,0 +1,31 @@
+# Asks the Supabase "mailer" function to send any reminders due today.
+# Runs every morning (14:07 UTC = 8:07 AM Central in winter, 9:07 AM in summer),
+# or manually from the Actions tab. Needs the repo secret CRON_SECRET, which must
+# match the CRON_SECRET set in Supabase → Edge Functions → Secrets.
+name: Daily reminders
+
+on:
+  schedule:
+    - cron: '7 14 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview only (no emails sent)'
+        type: boolean
+        default: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run reminders
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          curl -sS --fail-with-body --retry 3 --retry-delay 20 \
+            -X POST "https://ngmsqtqsaklfawogmlkf.supabase.co/functions/v1/mailer" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -d "{\"action\":\"daily\",\"dry_run\":$DRY_RUN}"

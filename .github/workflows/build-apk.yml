@@ -6,6 +6,10 @@ name: Build Android APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'supabase/**'
+      - '**.md'
+      - '.github/workflows/daily-reminders.yml'
   workflow_dispatch:
 
 permissions:

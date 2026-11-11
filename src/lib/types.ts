@@ -57,4 +57,5 @@ export type Settings = {
   max_overdue_reminders: number;
   auto_reminders_enabled: boolean;
   signature: string;
+  sender_name: string;
 };

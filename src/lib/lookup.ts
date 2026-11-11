@@ -58,18 +58,71 @@ async function fromGoogleBooks(isbn13: string): Promise<BookInfo | null> {
   };
 }
 
+/** Open Library's cover-by-ISBN image, if one exists. */
+async function openLibraryCoverByIsbn(isbn13: string): Promise<string | null> {
+  const url = `https://covers.openlibrary.org/b/isbn/${isbn13}-M.jpg?default=false`;
+  try {
+    const res = await fetch(url);
+    return res.ok ? url.replace('?default=false', '') : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function lookupIsbn(isbn13: string): Promise<BookInfo | null> {
   const ol = await fromOpenLibrary(isbn13);
-  if (ol && ol.authors.length && ol.cover_url) return ol;
-  const gb = await fromGoogleBooks(isbn13);
-  if (!ol) return gb;
-  if (!gb) return ol;
-  // Fill gaps in the Open Library record with Google Books data.
-  return {
-    title: ol.title,
-    authors: ol.authors.length ? ol.authors : gb.authors,
-    publisher: ol.publisher ?? gb.publisher,
-    published_year: ol.published_year ?? gb.published_year,
-    cover_url: ol.cover_url ?? gb.cover_url,
+  let info: BookInfo | null = ol;
+  if (!ol || !ol.authors.length || !ol.cover_url) {
+    const gb = await fromGoogleBooks(isbn13);
+    if (!ol) info = gb;
+    else if (gb)
+      // Fill gaps in the Open Library record with Google Books data.
+      info = {
+        title: ol.title,
+        authors: ol.authors.length ? ol.authors : gb.authors,
+        publisher: ol.publisher ?? gb.publisher,
+        published_year: ol.published_year ?? gb.published_year,
+        cover_url: ol.cover_url ?? gb.cover_url,
+      };
+  }
+  if (info && !info.cover_url) info.cover_url = await openLibraryCoverByIsbn(isbn13);
+  return info;
+}
+
+/**
+ * Search online for possible covers (other editions, other sources).
+ * Returns image URLs, best guesses first.
+ */
+export async function findCovers(opts: { isbn13?: string | null; title: string; author?: string }): Promise<string[]> {
+  const title = opts.title.trim();
+  const author = (opts.author ?? '').trim();
+  const urls: string[] = [];
+  const add = (u?: string | null) => {
+    const h = https(u);
+    if (h && !urls.includes(h)) urls.push(h);
   };
+
+  const tasks: Promise<void>[] = [];
+  if (opts.isbn13) tasks.push(openLibraryCoverByIsbn(opts.isbn13).then(add));
+
+  if (title) {
+    const q = new URLSearchParams({ title, fields: 'cover_i', limit: '15' });
+    if (author) q.set('author', author);
+    tasks.push(
+      fetchJson(`https://openlibrary.org/search.json?${q}`).then((d) => {
+        for (const doc of d?.docs ?? []) if (doc.cover_i > 0) add(`https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`);
+      }),
+    );
+    const g = `intitle:${title}` + (author ? `+inauthor:${author}` : '');
+    tasks.push(
+      fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(g)}&maxResults=20`).then((d) => {
+        for (const item of d?.items ?? []) {
+          const l = item.volumeInfo?.imageLinks;
+          add((l?.thumbnail ?? l?.smallThumbnail)?.replace('&edge=curl', ''));
+        }
+      }),
+    );
+  }
+  await Promise.all(tasks);
+  return urls.slice(0, 30);
 }

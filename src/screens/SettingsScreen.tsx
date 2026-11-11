@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { Alert, KeyboardAvoidingView, ScrollView, Switch, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Button, Field, Loading, colors, s } from '../components/ui';
-import { friendlyError, getSettings, saveSettings } from '../lib/db';
+import { friendlyError, getSettings, saveSettings, sendEmail } from '../lib/db';
 import { supabase } from '../lib/supabase';
 
 export default function SettingsScreen() {
@@ -15,6 +15,8 @@ export default function SettingsScreen() {
   const [maxOverdue, setMaxOverdue] = useState('4');
   const [auto, setAuto] = useState(true);
   const [signature, setSignature] = useState('Thanks!');
+  const [senderName, setSenderName] = useState('');
+  const [testing, setTesting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -29,6 +31,7 @@ export default function SettingsScreen() {
             setMaxOverdue(String(st.max_overdue_reminders));
             setAuto(st.auto_reminders_enabled);
             setSignature(st.signature);
+            setSenderName(st.sender_name ?? '');
           }
         } catch (e) {
           Alert.alert('Couldn’t load settings', friendlyError(e));
@@ -53,12 +56,25 @@ export default function SettingsScreen() {
         max_overdue_reminders: vals[3],
         auto_reminders_enabled: auto,
         signature: signature.trim() || 'Thanks!',
+        sender_name: senderName.trim(),
       });
       Alert.alert('Saved');
     } catch (e) {
       Alert.alert('Couldn’t save', friendlyError(e));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function sendTest() {
+    setTesting(true);
+    try {
+      const to = await sendEmail('test');
+      Alert.alert('Test email sent', `Check the inbox for ${to}.`);
+    } catch (e) {
+      Alert.alert('Test email failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -78,10 +94,11 @@ export default function SettingsScreen() {
         <Field label="Remind this many days before due" value={before} onChangeText={setBefore} keyboardType="number-pad" />
         <Field label="When overdue, remind every (days)" value={overdueEvery} onChangeText={setOverdueEvery} keyboardType="number-pad" />
         <Field label="Maximum overdue reminders" value={maxOverdue} onChangeText={setMaxOverdue} keyboardType="number-pad" />
+        <Field label="Sender name (shown in borrowers’ inbox)" value={senderName} onChangeText={setSenderName} placeholder="e.g. Mr. Medlin" />
         <Field label="Email sign-off" value={signature} onChangeText={setSignature} multiline />
-        <Text style={[s.muted, { marginBottom: 10 }]}>Emails will start sending once the email step is set up.</Text>
 
         <Button title="Save settings" onPress={save} loading={saving} />
+        <Button title="Send me a test email" variant="secondary" onPress={sendTest} loading={testing} />
 
         <Text style={s.h2}>Account</Text>
         <Text style={[s.muted, { marginBottom: 8 }]}>Signed in as {email}</Text>

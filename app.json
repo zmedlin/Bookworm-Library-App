@@ -24,11 +24,19 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Bookworm uses the camera to scan book barcodes.",
+          "cameraPermission": "Bookworm uses the camera to scan barcodes and photograph book covers.",
           "recordAudioAndroid": false
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Bookworm uses the camera to scan barcodes and photograph book covers.",
+          "photosPermission": "Bookworm lets you choose a photo for a book cover.",
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }

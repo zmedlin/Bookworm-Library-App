@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, KeyboardAvoidingView, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, ScrollView, Text, View } from 'react-native';
+import CoverPicker from '../components/CoverPicker';
+import { getCoverPhoto } from '../lib/coverPhoto';
 import { Button, Cover, Field, Loading, colors, s } from '../components/ui';
 import { lookupIsbn } from '../lib/lookup';
 import { createBook, friendlyError, getBookStatus, updateBook } from '../lib/db';
@@ -21,6 +23,25 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
   const [year, setYear] = useState('');
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  function openPicker() {
+    if (!title.trim()) return Alert.alert('Add a title first', 'The title is used to search for covers.');
+    setPickerOpen(true);
+  }
+
+  async function photo(source: 'camera' | 'library') {
+    setPhotoBusy(true);
+    try {
+      const url = await getCoverPhoto(source);
+      if (url) setCoverUrl(url);
+    } catch (e) {
+      Alert.alert('Couldn’t add photo', e instanceof Error ? e.message : String(e));
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   useEffect(() => {
     navigation.setOptions({ title: editing ? 'Edit book' : 'Add book' });
@@ -95,17 +116,40 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
       <ScrollView contentContainerStyle={s.pad} keyboardShouldPersistTaps="handled">
         {notFound && (
           <View style={[s.card, { backgroundColor: '#FFF6E5', borderColor: '#F0D9A8' }]}>
-            <Text style={s.body}>No details found online for this ISBN. Fill in what you know.</Text>
+            <Text style={s.body}>No details found online for this ISBN. Fill in what you know, then add a cover below.</Text>
           </View>
         )}
-        <View style={{ alignItems: 'center', marginBottom: 16 }}>
-          <Cover uri={coverUrl} size={110} />
-          {coverUrl && (
-            <Text style={[s.muted, { marginTop: 6, color: colors.primary }]} onPress={() => setCoverUrl(null)}>
-              Remove cover
+        <View style={[s.row, { marginBottom: 16, alignItems: 'flex-start' }]}>
+          <View>
+            <Cover uri={coverUrl} size={100} />
+            {photoBusy && (
+              <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center' }}>
+                <ActivityIndicator color={colors.primary} size="large" />
+              </View>
+            )}
+          </View>
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            {!coverUrl && <Text style={[s.muted, { marginBottom: 4 }]}>No cover yet.</Text>}
+            <Button title="Find cover online" variant="secondary" onPress={openPicker} style={{ paddingVertical: 9 }} />
+            <Button title="Take a photo" variant="secondary" onPress={() => photo('camera')} style={{ paddingVertical: 9 }} />
+            <Text style={[s.muted, { color: colors.primary, marginTop: 4 }]} onPress={() => photo('library')}>
+              Choose from gallery
             </Text>
-          )}
+            {coverUrl && (
+              <Text style={[s.muted, { color: colors.danger, marginTop: 8 }]} onPress={() => setCoverUrl(null)}>
+                Remove cover
+              </Text>
+            )}
+          </View>
         </View>
+        <CoverPicker
+          visible={pickerOpen}
+          isbn13={isbn.trim() ? isbn.trim() : null}
+          title={title}
+          author={authors.split(',')[0]?.trim() ?? ''}
+          onPick={(u) => { setCoverUrl(u); setPickerOpen(false); }}
+          onClose={() => setPickerOpen(false)}
+        />
         <Field label="Title *" value={title} onChangeText={setTitle} />
         <Field label="Author(s), comma-separated" value={authors} onChangeText={setAuthors} />
         <Field label="Publisher" value={publisher} onChangeText={setPublisher} />
