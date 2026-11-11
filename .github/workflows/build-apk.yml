@@ -1,0 +1,60 @@
+# Builds the Android app (APK) in the cloud and publishes it as a GitHub Release,
+# so it can be downloaded straight onto the phone.
+# Runs on every push to main, or manually from the Actions tab ("Run workflow").
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: 1
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk Bookworm.apk
+          gh release create "build-${{ github.run_number }}" Bookworm.apk \
+            --title "Bookworm build ${{ github.run_number }}" \
+            --notes "Built from ${{ github.sha }}. On your phone, download Bookworm.apk and open it to install." \
+            --latest
