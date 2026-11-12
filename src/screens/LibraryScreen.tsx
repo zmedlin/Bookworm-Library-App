@@ -94,7 +94,12 @@ export default function LibraryScreen() {
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={[s.body, { fontWeight: '600' }]} numberOfLines={2}>{item.title}</Text>
               <Text style={s.muted} numberOfLines={1}>{item.authors.join(', ')}</Text>
-              {item.borrower_name && <Text style={s.muted} numberOfLines={1}>→ {item.borrower_name}</Text>}
+              {item.copies > 1 && (
+                <Text style={s.muted}>{item.copies - item.open_loans} of {item.copies} copies on shelf</Text>
+              )}
+              {item.borrower_names.length > 0 && (
+                <Text style={s.muted} numberOfLines={1}>→ {item.borrower_names.join(', ')}</Text>
+              )}
             </View>
             <StatusBadge status={statusOf(item)} />
           </Pressable>

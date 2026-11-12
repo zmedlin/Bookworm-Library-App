@@ -5,6 +5,7 @@ export type RootStackParamList = {
   ConfirmBook: { isbn13?: string; bookId?: string };
   BookDetail: { bookId: string };
   Lend: { bookId: string; borrowerId?: string };
+  EditLoan: { loanId: string };
   /** Without borrowerId: add a new borrower. */
   BorrowerDetail: { borrowerId?: string };
 };

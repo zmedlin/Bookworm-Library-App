@@ -23,6 +23,7 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
   const [year, setYear] = useState('');
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
+  const [copies, setCopies] = useState('1');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
 
@@ -57,6 +58,7 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
             setYear(b.published_year ? String(b.published_year) : '');
             setCoverUrl(b.cover_url);
             setNotes(b.notes ?? '');
+            setCopies(String(b.copies ?? 1));
           }
         } else if (scannedIsbn) {
           const info = await lookupIsbn(scannedIsbn);
@@ -85,7 +87,10 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
     if (y !== null && (!Number.isInteger(y) || y < 1000 || y > 2100))
       return Alert.alert('Check the year', 'Enter a 4-digit year or leave it blank.');
 
+    const n = Number.parseInt(copies, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 999) return Alert.alert('Check copies', 'Enter how many copies you own (1 or more).');
     const input = {
+      copies: n,
       isbn13,
       title: title.trim(),
       authors: authors.split(',').map((a) => a.trim()).filter(Boolean),
@@ -155,6 +160,7 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
         <Field label="Publisher" value={publisher} onChangeText={setPublisher} />
         <Field label="Year" value={year} onChangeText={setYear} keyboardType="number-pad" maxLength={4} />
         <Field label="ISBN" value={isbn} onChangeText={setIsbn} keyboardType="number-pad" editable={!scannedIsbn || editing} />
+        <Field label="Copies you own" value={copies} onChangeText={setCopies} keyboardType="number-pad" maxLength={3} />
         <Field label="Notes" value={notes} onChangeText={setNotes} multiline />
         <Button title={editing ? 'Save changes' : 'Add to library'} onPress={save} loading={saving} disabled={!title.trim()} />
         <Button title="Cancel" variant="secondary" onPress={() => navigation.goBack()} />

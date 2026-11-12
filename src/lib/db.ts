@@ -29,16 +29,20 @@ export function friendlyError(e: any): string {
     if (String(e.message).includes('isbn13')) return 'That book is already in your library.';
     return 'That already exists.';
   }
+  if (e.code === 'P0001') return e.message; // messages from the database's own checks
   if (e.code === '23503') return 'This is still linked to loan records, so it can’t be deleted.';
   if (e.code === '23514') return 'Please check the values you entered.';
   return e.message ?? String(e);
 }
 
 /** Status is worked out on the phone so "overdue" follows your local date. */
-export function statusOf(b: Pick<BookWithStatus, 'open_loan_id' | 'due_date'>): BookStatus {
-  if (!b.open_loan_id) return 'on_shelf';
-  return b.due_date && b.due_date < todayIso() ? 'overdue' : 'on_loan';
+export function statusOf(b: Pick<BookWithStatus, 'open_loans' | 'next_due'>): BookStatus {
+  if (!b.open_loans) return 'on_shelf';
+  return b.next_due && b.next_due < todayIso() ? 'overdue' : 'on_loan';
 }
+
+export const availableCopies = (b: Pick<BookWithStatus, 'copies' | 'open_loans'>) =>
+  Math.max(0, b.copies - b.open_loans);
 
 // ---------- Books ----------
 
@@ -66,7 +70,7 @@ export async function findBookByIsbn(isbn13: string): Promise<Book | null> {
   return check(await supabase.from('books').select('*').eq('isbn13', isbn13).maybeSingle()) as Book | null;
 }
 
-export type BookInput = BookInfo & { isbn13: string | null; notes: string | null };
+export type BookInput = BookInfo & { isbn13: string | null; notes: string | null; copies?: number };
 
 export async function createBook(input: BookInput): Promise<Book> {
   return check(await supabase.from('books').insert(input).select().single()) as Book;
@@ -124,11 +128,16 @@ export async function deleteBorrower(id: string): Promise<void> {
 
 // ---------- Loans ----------
 
-export async function lendBook(bookId: string, borrowerId: string, dueDate: string): Promise<string> {
+export async function lendBook(
+  bookId: string,
+  borrowerId: string,
+  dueDate: string,
+  autoRemind: boolean,
+): Promise<string> {
   const row = check(
     await supabase
       .from('loans')
-      .insert({ book_id: bookId, borrower_id: borrowerId, lent_at: todayIso(), due_date: dueDate })
+      .insert({ book_id: bookId, borrower_id: borrowerId, lent_at: todayIso(), due_date: dueDate, auto_remind: autoRemind })
       .select('id')
       .single(),
   ) as { id: string };
@@ -141,6 +150,37 @@ export async function markReturned(loanId: string): Promise<void> {
 
 export async function changeDueDate(loanId: string, dueDate: string): Promise<void> {
   check(await supabase.from('loans').update({ due_date: dueDate }).eq('id', loanId));
+}
+
+export async function getLoan(loanId: string): Promise<LoanFull | null> {
+  return check(
+    await supabase
+      .from('loans')
+      .select('*, book:books(id,title,authors,cover_url), borrower:borrowers(id,name,email)')
+      .eq('id', loanId)
+      .maybeSingle(),
+  ) as unknown as LoanFull | null;
+}
+
+export type LoanUpdate = Partial<{
+  borrower_id: string;
+  lent_at: string;
+  due_date: string;
+  auto_remind: boolean;
+  returned_at: string | null;
+}>;
+
+export async function updateLoan(loanId: string, patch: LoanUpdate): Promise<void> {
+  check(await supabase.from('loans').update(patch).eq('id', loanId));
+}
+
+/** For loans entered by mistake. Also removes their email log entries' link. */
+export async function deleteLoan(loanId: string): Promise<void> {
+  check(await supabase.from('loans').delete().eq('id', loanId));
+}
+
+export async function setCopies(bookId: string, copies: number): Promise<void> {
+  check(await supabase.from('books').update({ copies }).eq('id', bookId));
 }
 
 export async function listOpenLoans(): Promise<LoanFull[]> {
@@ -189,9 +229,8 @@ export async function saveSettings(s: Omit<Settings, 'owner_id'>): Promise<void>
 
 export type EmailAction = 'test' | 'lent' | 'remind';
 
-/** Sends an email through the server. Returns the address it was sent to. */
-export async function sendEmail(action: EmailAction, loanId?: string): Promise<string> {
-  const { data, error } = await supabase.functions.invoke('mailer', { body: { action, loan_id: loanId } });
+async function callMailer(body: Record<string, unknown>): Promise<any> {
+  const { data, error } = await supabase.functions.invoke('mailer', { body });
   if (error) {
     let msg = error.message;
     try {
@@ -201,7 +240,20 @@ export async function sendEmail(action: EmailAction, loanId?: string): Promise<s
     if (/Failed to send a request|not found/i.test(msg)) msg = 'The email service isn’t set up yet (the “mailer” function).';
     throw new Error(msg);
   }
+  return data;
+}
+
+/** Sends an email through the server. Returns the address it was sent to. */
+export async function sendEmail(action: EmailAction, loanId?: string): Promise<string> {
+  const data = await callMailer({ action, loan_id: loanId });
   return data?.to ?? '';
+}
+
+export type RemindAllResult = { people: number; books: number; sent?: number; failed?: { to: string; error: string }[] };
+
+/** One email per borrower listing their books. dryRun only counts. */
+export async function remindAll(scope: 'overdue' | 'all', dryRun: boolean): Promise<RemindAllResult> {
+  return callMailer({ action: 'remind_all', scope, dry_run: dryRun });
 }
 
 export async function getOpenLoanId(bookId: string): Promise<string | null> {

@@ -14,6 +14,7 @@ export default function SettingsScreen() {
   const [overdueEvery, setOverdueEvery] = useState('7');
   const [maxOverdue, setMaxOverdue] = useState('4');
   const [auto, setAuto] = useState(true);
+  const [autoDefault, setAutoDefault] = useState(true);
   const [signature, setSignature] = useState('Thanks!');
   const [senderName, setSenderName] = useState('');
   const [testing, setTesting] = useState(false);
@@ -30,6 +31,8 @@ export default function SettingsScreen() {
             setOverdueEvery(String(st.overdue_interval_days));
             setMaxOverdue(String(st.max_overdue_reminders));
             setAuto(st.auto_reminders_enabled);
+            setAutoDefault(st.auto_remind_default ?? true);
+            setAutoDefault(st.auto_remind_default ?? true);
             setSignature(st.signature);
             setSenderName(st.sender_name ?? '');
           }
@@ -55,6 +58,7 @@ export default function SettingsScreen() {
         overdue_interval_days: vals[2],
         max_overdue_reminders: vals[3],
         auto_reminders_enabled: auto,
+        auto_remind_default: autoDefault,
         signature: signature.trim() || 'Thanks!',
         sender_name: senderName.trim(),
       });
@@ -87,10 +91,20 @@ export default function SettingsScreen() {
         <Field label="Default loan length (days)" value={loanDays} onChangeText={setLoanDays} keyboardType="number-pad" />
 
         <Text style={s.h2}>Email reminders</Text>
-        <View style={[s.row, { justifyContent: 'space-between', marginBottom: 14 }]}>
-          <Text style={s.body}>Send reminders automatically</Text>
+        <View style={[s.row, { justifyContent: 'space-between', marginBottom: 4 }]}>
+          <Text style={[s.body, { flex: 1 }]}>Send automatic reminders</Text>
           <Switch value={auto} onValueChange={setAuto} trackColor={{ true: colors.primary }} />
         </View>
+        <Text style={[s.muted, { marginBottom: 14 }]}>
+          {auto
+            ? 'On: loans with automatic reminders turned on get emails.'
+            : 'Paused: no automatic emails go out, whatever each loan is set to.'}
+        </Text>
+        <View style={[s.row, { justifyContent: 'space-between', marginBottom: 4 }]}>
+          <Text style={[s.body, { flex: 1 }]}>New loans start with reminders on</Text>
+          <Switch value={autoDefault} onValueChange={setAutoDefault} trackColor={{ true: colors.primary }} />
+        </View>
+        <Text style={[s.muted, { marginBottom: 14 }]}>You can still change it on each loan.</Text>
         <Field label="Remind this many days before due" value={before} onChangeText={setBefore} keyboardType="number-pad" />
         <Field label="When overdue, remind every (days)" value={overdueEvery} onChangeText={setOverdueEvery} keyboardType="number-pad" />
         <Field label="Maximum overdue reminders" value={maxOverdue} onChangeText={setMaxOverdue} keyboardType="number-pad" />

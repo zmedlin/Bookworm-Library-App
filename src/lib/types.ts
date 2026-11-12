@@ -8,6 +8,7 @@ export type Book = {
   published_year: number | null;
   cover_url: string | null;
   notes: string | null;
+  copies: number;
   created_at: string;
 };
 
@@ -15,12 +16,9 @@ export type BookStatus = 'on_shelf' | 'on_loan' | 'overdue';
 
 /** A row of the book_status view. */
 export type BookWithStatus = Book & {
-  open_loan_id: string | null;
-  lent_at: string | null;
-  due_date: string | null;
-  borrower_id: string | null;
-  borrower_name: string | null;
-  borrower_email: string | null;
+  open_loans: number; // copies lent out right now
+  next_due: string | null; // earliest due date among open loans
+  borrower_names: string[]; // who has copies, soonest due first
 };
 
 export type BorrowerKind = 'friend' | 'student';
@@ -43,6 +41,7 @@ export type Loan = {
   returned_at: string | null;
   last_reminder_at: string | null;
   reminder_count: number;
+  auto_remind: boolean;
 };
 
 export type LoanWithBook = Loan & { book: Pick<Book, 'id' | 'title' | 'authors' | 'cover_url'> };
@@ -58,4 +57,5 @@ export type Settings = {
   auto_reminders_enabled: boolean;
   signature: string;
   sender_name: string;
+  auto_remind_default: boolean;
 };

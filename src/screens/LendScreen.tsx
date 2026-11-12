@@ -35,6 +35,7 @@ export default function LendScreen({ route, navigation }: StackProps<'Lend'>) {
 
   const [dueDate, setDueDate] = useState(addDaysIso(todayIso(), 14));
   const [sendConfirmation, setSendConfirmation] = useState(true);
+  const [autoRemind, setAutoRemind] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -43,7 +44,10 @@ export default function LendScreen({ route, navigation }: StackProps<'Lend'>) {
         setBook(b);
         setBorrowers(list);
         if (!list.length) setMode('new');
-        if (settings) setDueDate(addDaysIso(todayIso(), settings.default_loan_days));
+        if (settings) {
+          setDueDate(addDaysIso(todayIso(), settings.default_loan_days));
+          setAutoRemind(settings.auto_remind_default ?? true);
+        }
       } catch (e) {
         Alert.alert('Couldn’t load', friendlyError(e));
       } finally {
@@ -74,7 +78,7 @@ export default function LendScreen({ route, navigation }: StackProps<'Lend'>) {
       if (mode === 'new') {
         borrowerId = existingWithEmail ? existingWithEmail.id : (await createBorrower({ name, email, kind })).id;
       }
-      const loanId = await lendBook(bookId, borrowerId!, dueDate);
+      const loanId = await lendBook(bookId, borrowerId!, dueDate, autoRemind);
       if (sendConfirmation) {
         try {
           await sendEmail('lent', loanId);
@@ -186,11 +190,19 @@ export default function LendScreen({ route, navigation }: StackProps<'Lend'>) {
           <Text style={s.body}>📅  {formatDate(dueDate)}</Text>
         </Pressable>
 
-        <View style={[s.row, { justifyContent: 'space-between', marginTop: 18 }]}>
+        <Text style={s.h2}>Emails</Text>
+        <View style={[s.row, { justifyContent: 'space-between' }]}>
           <Text style={[s.body, { flex: 1 }]}>
-            Email {who ? who.split(' ')[0] : 'them'} a loan confirmation
+            Email {who ? who.split(' ')[0] : 'them'} a loan confirmation now
           </Text>
           <Switch value={sendConfirmation} onValueChange={setSendConfirmation} trackColor={{ true: colors.primary }} />
+        </View>
+        <View style={[s.row, { justifyContent: 'space-between', marginTop: 10 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.body}>Automatic reminders</Text>
+            <Text style={s.muted}>Before it’s due, on the due date, and while overdue</Text>
+          </View>
+          <Switch value={autoRemind} onValueChange={setAutoRemind} trackColor={{ true: colors.primary }} />
         </View>
 
         <Button title="Lend book" onPress={save} loading={saving} disabled={!canSave} style={{ marginTop: 20 }} />

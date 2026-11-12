@@ -1,17 +1,19 @@
-import React, { useCallback, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import React, { useCallback, useLayoutEffect, useState } from 'react';
+import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Button, Card, Cover, Loading, StatusBadge, colors, s } from '../components/ui';
-import { pickDate } from '../components/pickDate';
 import {
-  changeDueDate,
+  availableCopies,
   deleteBook,
   friendlyError,
   getBookStatus,
   loansForBook,
   markReturned,
   sendEmail,
+  setCopies,
   statusOf,
+  updateLoan,
 } from '../lib/db';
 import { dueLabel, formatDate, formatTimestamp, todayIso } from '../lib/dates';
 import type { BookWithStatus, LoanWithBorrower } from '../lib/types';
@@ -22,8 +24,17 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
   const [book, setBook] = useState<BookWithStatus | null>(null);
   const [history, setHistory] = useState<LoanWithBorrower[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [reminding, setReminding] = useState(false);
+  const [busyLoan, setBusyLoan] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable onPress={() => navigation.navigate('ConfirmBook', { bookId })} hitSlop={12} accessibilityLabel="Edit book">
+          <Ionicons name="create-outline" size={24} color={colors.primary} />
+        </Pressable>
+      ),
+    });
+  }, [navigation, bookId]);
 
   const load = useCallback(async () => {
     try {
@@ -43,59 +54,53 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
   if (!book) return <Text style={s.empty}>This book was not found.</Text>;
 
   const status = statusOf(book);
+  const available = availableCopies(book);
+  const today = todayIso();
+  const openLoans = history.filter((l) => !l.returned_at).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const pastLoans = history.filter((l) => l.returned_at);
-  const openLoan = history.find((l) => !l.returned_at);
 
-  function confirmReturn() {
-    Alert.alert('Mark as returned?', `${book!.borrower_name} returned “${book!.title}”.`, [
+  async function run(loanId: string, fn: () => Promise<void>, errTitle = 'Couldn’t update') {
+    setBusyLoan(loanId);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      Alert.alert(errTitle, e instanceof Error ? e.message : friendlyError(e));
+    } finally {
+      setBusyLoan(null);
+    }
+  }
+
+  function confirmReturn(l: LoanWithBorrower) {
+    Alert.alert('Mark as returned?', `${l.borrower.name} returned “${book!.title}”.`, [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Returned',
-        onPress: async () => {
-          setBusy(true);
-          try {
-            await markReturned(book!.open_loan_id!);
-            await load();
-          } catch (e) {
-            Alert.alert('Couldn’t update', friendlyError(e));
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
+      { text: 'Returned', onPress: () => run(l.id, () => markReturned(l.id)) },
     ]);
   }
 
-  function editDueDate() {
-    pickDate(book!.due_date!, async (iso) => {
-      try {
-        await changeDueDate(book!.open_loan_id!, iso);
-        await load();
-      } catch (e) {
-        Alert.alert('Couldn’t update', friendlyError(e));
-      }
-    }, book!.lent_at ?? todayIso());
-  }
-
-  function confirmRemind() {
-    Alert.alert('Send a reminder?', `Email ${book!.borrower_name} (${book!.borrower_email}) about “${book!.title}”.`, [
+  function confirmRemind(l: LoanWithBorrower) {
+    Alert.alert('Send a reminder?', `Email ${l.borrower.name} (${l.borrower.email}) about “${book!.title}”.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Send',
-        onPress: async () => {
-          setReminding(true);
-          try {
-            await sendEmail('remind', book!.open_loan_id!);
-            await load();
+        onPress: () =>
+          run(l.id, async () => {
+            await sendEmail('remind', l.id);
             Alert.alert('Reminder sent');
-          } catch (e) {
-            Alert.alert('Couldn’t send', e instanceof Error ? e.message : String(e));
-          } finally {
-            setReminding(false);
-          }
-        },
+          }, 'Couldn’t send'),
       },
     ]);
+  }
+
+  async function changeCopies(delta: number) {
+    const next = book!.copies + delta;
+    if (next < 1) return;
+    try {
+      await setCopies(bookId, next);
+      await load();
+    } catch (e) {
+      Alert.alert('Couldn’t change copies', friendlyError(e));
+    }
   }
 
   function confirmDelete() {
@@ -121,7 +126,9 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
       <View style={[s.row, { alignItems: 'flex-start' }]}>
         <Pressable onPress={() => navigation.navigate('ConfirmBook', { bookId })}>
           <Cover uri={book.cover_url} size={90} />
-          {!book.cover_url && <Text style={[s.muted, { fontSize: 11, textAlign: 'center', color: colors.primary }]}>Add cover</Text>}
+          <Text style={[s.muted, { fontSize: 11, textAlign: 'center', color: colors.primary, marginTop: 2 }]}>
+            {book.cover_url ? 'Change cover' : 'Add cover'}
+          </Text>
         </Pressable>
         <View style={{ flex: 1, marginLeft: 14 }}>
           <Text style={s.h1}>{book.title}</Text>
@@ -138,35 +145,80 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
 
       {book.notes && <Text style={[s.body, { marginTop: 14 }]}>{book.notes}</Text>}
 
-      {status === 'on_shelf' ? (
-        <Button title="Lend this book" onPress={() => navigation.navigate('Lend', { bookId })} style={{ marginTop: 18 }} />
-      ) : (
-        <Card style={{ marginTop: 18, borderColor: status === 'overdue' ? colors.overdue : colors.line }}>
-          <Text style={s.label}>LENT TO</Text>
-          <Pressable onPress={() => navigation.navigate('BorrowerDetail', { borrowerId: book.borrower_id! })}>
-            <Text style={[s.body, { fontWeight: '700', color: colors.primary }]}>{book.borrower_name}</Text>
-          </Pressable>
-          <Text style={s.muted}>{book.borrower_email}</Text>
-          <Text style={[s.body, { marginTop: 8 }]}>Lent {formatDate(book.lent_at!)}</Text>
-          <Text style={[s.body, status === 'overdue' && { color: colors.overdue, fontWeight: '700' }]}>
-            Due {formatDate(book.due_date!)} ({dueLabel(book.due_date!)})
+      {/* Copies */}
+      <Card style={[s.row, { marginTop: 16, justifyContent: 'space-between' }]}>
+        <View>
+          <Text style={[s.body, { fontWeight: '700' }]}>
+            {book.copies} {book.copies === 1 ? 'copy' : 'copies'}
           </Text>
-          {openLoan?.last_reminder_at && (
-            <Text style={s.muted}>
-              Last reminded {formatTimestamp(openLoan.last_reminder_at)} ({openLoan.reminder_count} so far)
-            </Text>
-          )}
-          <Button title="Mark returned" onPress={confirmReturn} loading={busy} style={{ marginTop: 10 }} />
-          <Button title="Send reminder email" variant="secondary" onPress={confirmRemind} loading={reminding} />
-          <Button title="Change due date" variant="secondary" onPress={editDueDate} />
-        </Card>
+          <Text style={s.muted}>
+            {available} on shelf{book.open_loans ? ` · ${book.open_loans} lent out` : ''}
+          </Text>
+        </View>
+        <View style={s.row}>
+          <Pressable
+            onPress={() => changeCopies(-1)}
+            disabled={book.copies <= Math.max(1, book.open_loans)}
+            style={{ padding: 6, opacity: book.copies <= Math.max(1, book.open_loans) ? 0.3 : 1 }}
+            accessibilityLabel="Remove a copy"
+          >
+            <Ionicons name="remove-circle-outline" size={30} color={colors.primary} />
+          </Pressable>
+          <Pressable onPress={() => changeCopies(1)} style={{ padding: 6 }} accessibilityLabel="Add a copy">
+            <Ionicons name="add-circle-outline" size={30} color={colors.primary} />
+          </Pressable>
+        </View>
+      </Card>
+
+      {available > 0 ? (
+        <Button title={book.copies > 1 ? 'Lend a copy' : 'Lend this book'} onPress={() => navigation.navigate('Lend', { bookId })} />
+      ) : (
+        <Text style={[s.muted, { textAlign: 'center', marginVertical: 6 }]}>
+          All copies are lent out. Tap + to add a copy if you have another.
+        </Text>
       )}
+
+      {/* Current loans */}
+      {openLoans.length > 0 && <Text style={s.h2}>Lent out ({openLoans.length})</Text>}
+      {openLoans.map((l) => {
+        const overdue = l.due_date < today;
+        return (
+          <Card key={l.id} style={overdue ? { borderColor: colors.overdue } : undefined}>
+            <Pressable onPress={() => navigation.navigate('BorrowerDetail', { borrowerId: l.borrower.id })}>
+              <Text style={[s.body, { fontWeight: '700', color: colors.primary }]}>{l.borrower.name}</Text>
+            </Pressable>
+            <Text style={s.muted}>{l.borrower.email}</Text>
+            <Text style={[s.body, { marginTop: 6 }]}>Lent {formatDate(l.lent_at)}</Text>
+            <Text style={[s.body, overdue && { color: colors.overdue, fontWeight: '700' }]}>
+              Due {formatDate(l.due_date)} ({dueLabel(l.due_date)})
+            </Text>
+            {l.last_reminder_at && (
+              <Text style={s.muted}>
+                Last reminded {formatTimestamp(l.last_reminder_at)} ({l.reminder_count} so far)
+              </Text>
+            )}
+            <View style={[s.row, { justifyContent: 'space-between', marginTop: 6 }]}>
+              <Text style={s.body}>Automatic reminders</Text>
+              <Switch
+                value={l.auto_remind}
+                onValueChange={(v) => run(l.id, () => updateLoan(l.id, { auto_remind: v }))}
+                trackColor={{ true: colors.primary }}
+              />
+            </View>
+            <View style={[s.row, { marginTop: 4 }]}>
+              <Button title="Returned" onPress={() => confirmReturn(l)} loading={busyLoan === l.id} style={{ flex: 1, marginRight: 6 }} />
+              <Button title="Remind" variant="secondary" onPress={() => confirmRemind(l)} style={{ flex: 1, marginRight: 6 }} />
+              <Button title="Edit" variant="secondary" onPress={() => navigation.navigate('EditLoan', { loanId: l.id })} style={{ flex: 1 }} />
+            </View>
+          </Card>
+        );
+      })}
 
       {pastLoans.length > 0 && (
         <>
           <Text style={s.h2}>Loan history</Text>
           {pastLoans.map((l) => (
-            <Pressable key={l.id} onPress={() => navigation.navigate('BorrowerDetail', { borrowerId: l.borrower.id })}>
+            <Pressable key={l.id} onPress={() => navigation.navigate('EditLoan', { loanId: l.id })}>
               <Card>
                 <Text style={[s.body, { fontWeight: '600' }]}>{l.borrower.name}</Text>
                 <Text style={s.muted}>
@@ -179,7 +231,7 @@ export default function BookDetailScreen({ route, navigation }: StackProps<'Book
       )}
 
       <View style={{ marginTop: 24 }}>
-        <Button title="Edit details" variant="secondary" onPress={() => navigation.navigate('ConfirmBook', { bookId })} />
+        <Button title="Edit details & cover" variant="secondary" onPress={() => navigation.navigate('ConfirmBook', { bookId })} />
         <Button title="Delete book" variant="danger" onPress={confirmDelete} />
       </View>
     </ScrollView>

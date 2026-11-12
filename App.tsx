@@ -20,6 +20,7 @@ import ConfirmBookScreen from './src/screens/ConfirmBookScreen';
 import BookDetailScreen from './src/screens/BookDetailScreen';
 import LendScreen from './src/screens/LendScreen';
 import BorrowerDetailScreen from './src/screens/BorrowerDetailScreen';
+import EditLoanScreen from './src/screens/EditLoanScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
@@ -83,6 +84,7 @@ export default function App() {
             <Stack.Screen name="BookDetail" component={BookDetailScreen} options={{ title: 'Book' }} />
             <Stack.Screen name="Lend" component={LendScreen} options={{ title: 'Lend book' }} />
             <Stack.Screen name="BorrowerDetail" component={BorrowerDetailScreen} options={{ title: 'Borrower' }} />
+            <Stack.Screen name="EditLoan" component={EditLoanScreen} options={{ title: 'Edit loan' }} />
           </Stack.Navigator>
         </NavigationContainer>
       )}
