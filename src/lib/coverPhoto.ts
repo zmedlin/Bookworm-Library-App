@@ -37,3 +37,29 @@ export async function getCoverPhoto(source: 'camera' | 'library'): Promise<strin
   if (error) throw new Error(error.message);
   return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
+
+const TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+/**
+ * Save our own copy of a cover found online, so it keeps working even if the
+ * source site changes or removes it. Returns the stored URL, or the original
+ * URL if copying isn't possible.
+ */
+export async function saveCoverCopy(url: string): Promise<string> {
+  if (url.includes('/storage/v1/object/public/covers/')) return url; // already ours
+  try {
+    const res = await fetch(url);
+    const type = (res.headers.get('content-type') ?? '').split(';')[0].trim();
+    if (!res.ok || !TYPES[type]) return url;
+    const bytes = await res.arrayBuffer();
+    if (bytes.byteLength < 1000 || bytes.byteLength > 5_000_000) return url;
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return url;
+    const path = `${u.user.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${TYPES[type]}`;
+    const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType: type });
+    if (error) return url;
+    return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+  } catch {
+    return url;
+  }
+}

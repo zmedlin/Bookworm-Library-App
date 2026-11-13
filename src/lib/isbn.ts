@@ -26,6 +26,16 @@ export function isbn10to13(isbn10: string): string {
   return core + ((10 - (sum % 10)) % 10);
 }
 
+/** ISBN-13 → ISBN-10 (only possible for 978- ISBNs). */
+export function isbn13to10(isbn13: string): string | null {
+  if (!/^978[0-9]{10}$/.test(isbn13)) return null;
+  const core = isbn13.slice(3, 12);
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Number(core[i]) * (10 - i);
+  const check = (11 - (sum % 11)) % 11;
+  return core + (check === 10 ? 'X' : String(check));
+}
+
 export type IsbnResult =
   | { ok: true; isbn13: string }
   | { ok: false; reason: 'not_a_book_code' | 'invalid' };

@@ -1,5 +1,6 @@
 // Look up book details from an ISBN using free public APIs.
 // Open Library first, Google Books as a fallback.
+import { isbn13to10 } from './isbn';
 
 export type BookInfo = {
   title: string;
@@ -58,6 +59,32 @@ async function fromGoogleBooks(isbn13: string): Promise<BookInfo | null> {
   };
 }
 
+// ---------- Amazon ----------
+// Amazon has no free official cover API; this long-standing (undocumented) image address
+// works for most ISBN-10s and returns a 1×1 placeholder when there's no cover.
+
+const amazonUrl = (isbn10: string) => `https://images-na.ssl-images-amazon.com/images/P/${isbn10}.01.LZZZZZZZ.jpg`;
+
+/** Amazon cover URLs for a set of ISBNs (10 or 13 digits). Not checked; tiny placeholders are filtered when shown. */
+export function amazonCoverUrls(isbns: string[]): string[] {
+  const tens = isbns.map((i) => (i.length === 10 ? i.toUpperCase() : isbn13to10(i))).filter(Boolean) as string[];
+  return [...new Set(tens)].map(amazonUrl);
+}
+
+/** Amazon's cover for one ISBN, only if a real image exists (not the placeholder). */
+async function amazonCoverByIsbn(isbn13: string): Promise<string | null> {
+  const [url] = amazonCoverUrls([isbn13]);
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !(res.headers.get('content-type') ?? '').startsWith('image/')) return null;
+    const bytes = (await res.arrayBuffer()).byteLength;
+    return bytes > 1000 ? url : null; // the placeholder is a ~43-byte GIF
+  } catch {
+    return null;
+  }
+}
+
 /** Open Library's cover-by-ISBN image, if one exists. */
 async function openLibraryCoverByIsbn(isbn13: string): Promise<string | null> {
   const url = `https://covers.openlibrary.org/b/isbn/${isbn13}-M.jpg?default=false`;
@@ -85,7 +112,7 @@ export async function lookupIsbn(isbn13: string): Promise<BookInfo | null> {
         cover_url: ol.cover_url ?? gb.cover_url,
       };
   }
-  if (info && !info.cover_url) info.cover_url = await openLibraryCoverByIsbn(isbn13);
+  if (info && !info.cover_url) info.cover_url = (await openLibraryCoverByIsbn(isbn13)) ?? (await amazonCoverByIsbn(isbn13));
   return info;
 }
 
@@ -94,15 +121,19 @@ export const mainTitle = (title: string) => title.split(/[:(\[]/)[0].replace(/\s
 
 const olCover = (id: number) => `https://covers.openlibrary.org/b/id/${id}-M.jpg`;
 
-/** Covers from every edition of an Open Library work (e.g. "/works/OL45804W"). */
-async function openLibraryWorkCovers(workKey: string): Promise<string[]> {
+/** Covers (and ISBNs) from every edition of an Open Library work (e.g. "/works/OL45804W"). */
+async function openLibraryWorkCovers(workKey: string): Promise<{ covers: string[]; isbns: string[] }> {
   const [work, editions] = await Promise.all([
     fetchJson(`https://openlibrary.org${workKey}.json`),
     fetchJson(`https://openlibrary.org${workKey}/editions.json?limit=100`),
   ]);
   const ids: number[] = [...(work?.covers ?? [])];
-  for (const e of editions?.entries ?? []) ids.push(...(e.covers ?? []));
-  return [...new Set(ids.filter((id) => id > 0))].map(olCover);
+  const isbns: string[] = [];
+  for (const e of editions?.entries ?? []) {
+    ids.push(...(e.covers ?? []));
+    isbns.push(...(e.isbn_10 ?? []), ...(e.isbn_13 ?? []));
+  }
+  return { covers: [...new Set(ids.filter((id) => id > 0))].map(olCover), isbns };
 }
 
 /** The Open Library work that an ISBN belongs to. */
@@ -166,7 +197,10 @@ export async function findCovers(opts: { isbn13?: string | null; title: string; 
 
   // Editions of the matching work(s): the richest source of alternative covers.
   const workKeys = [...new Set([isbnWork, ...search.works.slice(0, 2)].filter(Boolean) as string[])];
-  const editionCovers = (await Promise.all(workKeys.map(openLibraryWorkCovers))).flat();
+  const works = await Promise.all(workKeys.map(openLibraryWorkCovers));
+  const editionCovers = works.flatMap((w) => w.covers);
+  // Amazon: this book's ISBN first, then other editions' ISBNs.
+  const amazon = amazonCoverUrls([...(opts.isbn13 ? [opts.isbn13] : []), ...works.flatMap((w) => w.isbns)]).slice(0, 20);
 
   let more: string[] = [];
   const soFar = new Set([isbnCover, ...editionCovers, ...search.covers, ...apple, ...google].filter(Boolean));
@@ -180,11 +214,11 @@ export async function findCovers(opts: { isbn13?: string | null; title: string; 
   }
 
   const urls: string[] = [];
-  for (const u of [isbnCover, ...apple.slice(0, 4), ...editionCovers, ...search.covers, ...google, ...apple.slice(4), ...more]) {
+  for (const u of [isbnCover, ...amazon.slice(0, 1), ...apple.slice(0, 4), ...editionCovers, ...amazon.slice(1), ...search.covers, ...google, ...apple.slice(4), ...more]) {
     const h = https(u);
     if (h && !urls.includes(h)) urls.push(h);
   }
-  return urls.slice(0, 60);
+  return urls.slice(0, 80);
 }
 
 /** Opens a Google Images search for the book in the phone's browser. */

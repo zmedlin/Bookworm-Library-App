@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, ScrollView, Text, View } from 'react-native';
 import CoverPicker from '../components/CoverPicker';
-import { getCoverPhoto } from '../lib/coverPhoto';
+import { getCoverPhoto, saveCoverCopy } from '../lib/coverPhoto';
 import { Button, Cover, Field, Loading, colors, s } from '../components/ui';
 import { lookupIsbn } from '../lib/lookup';
 import { createBook, friendlyError, getBookStatus, updateBook } from '../lib/db';
@@ -30,6 +30,18 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
   function openPicker() {
     if (!title.trim()) return Alert.alert('Add a title first', 'The title is used to search for covers.');
     setPickerOpen(true);
+  }
+
+  /** A cover chosen online: show it now, then swap in our own saved copy. */
+  async function pickOnline(url: string) {
+    setPickerOpen(false);
+    setCoverUrl(url);
+    setPhotoBusy(true);
+    try {
+      setCoverUrl(await saveCoverCopy(url));
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   async function photo(source: 'camera' | 'library') {
@@ -152,7 +164,7 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
           isbn13={isbn.trim() ? isbn.trim() : null}
           title={title}
           author={authors.split(',')[0]?.trim() ?? ''}
-          onPick={(u) => { setCoverUrl(u); setPickerOpen(false); }}
+          onPick={pickOnline}
           onClose={() => setPickerOpen(false)}
         />
         <Field label="Title *" value={title} onChangeText={setTitle} />
@@ -162,7 +174,7 @@ export default function ConfirmBookScreen({ route, navigation }: StackProps<'Con
         <Field label="ISBN" value={isbn} onChangeText={setIsbn} keyboardType="number-pad" editable={!scannedIsbn || editing} />
         <Field label="Copies you own" value={copies} onChangeText={setCopies} keyboardType="number-pad" maxLength={3} />
         <Field label="Notes" value={notes} onChangeText={setNotes} multiline />
-        <Button title={editing ? 'Save changes' : 'Add to library'} onPress={save} loading={saving} disabled={!title.trim()} />
+        <Button title={editing ? 'Save changes' : 'Add to library'} onPress={save} loading={saving} disabled={!title.trim() || photoBusy} />
         <Button title="Cancel" variant="secondary" onPress={() => navigation.goBack()} />
       </ScrollView>
     </KeyboardAvoidingView>

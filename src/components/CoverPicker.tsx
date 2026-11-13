@@ -76,7 +76,7 @@ export default function CoverPicker({
         {loading ? (
           <View style={{ alignItems: 'center', marginTop: 40 }}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[s.muted, { marginTop: 10 }]}>Searching other editions, Apple Books and Google Books…</Text>
+            <Text style={[s.muted, { marginTop: 10 }]}>Searching other editions, Amazon, Apple Books and Google Books…</Text>
           </View>
         ) : (
           <FlatList
