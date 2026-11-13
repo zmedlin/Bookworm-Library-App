@@ -89,40 +89,104 @@ export async function lookupIsbn(isbn13: string): Promise<BookInfo | null> {
   return info;
 }
 
+/** "Dune: Deluxe Edition (Penguin Classics)" → "Dune" — searches match far better on the main title. */
+export const mainTitle = (title: string) => title.split(/[:(\[]/)[0].replace(/\s+/g, ' ').trim() || title.trim();
+
+const olCover = (id: number) => `https://covers.openlibrary.org/b/id/${id}-M.jpg`;
+
+/** Covers from every edition of an Open Library work (e.g. "/works/OL45804W"). */
+async function openLibraryWorkCovers(workKey: string): Promise<string[]> {
+  const [work, editions] = await Promise.all([
+    fetchJson(`https://openlibrary.org${workKey}.json`),
+    fetchJson(`https://openlibrary.org${workKey}/editions.json?limit=100`),
+  ]);
+  const ids: number[] = [...(work?.covers ?? [])];
+  for (const e of editions?.entries ?? []) ids.push(...(e.covers ?? []));
+  return [...new Set(ids.filter((id) => id > 0))].map(olCover);
+}
+
+/** The Open Library work that an ISBN belongs to. */
+async function openLibraryWorkForIsbn(isbn13: string): Promise<string | null> {
+  const ed = await fetchJson(`https://openlibrary.org/isbn/${isbn13}.json`);
+  return ed?.works?.[0]?.key ?? null;
+}
+
+/** Open Library search: returns work keys and their main cover. */
+async function openLibrarySearch(title: string, author: string): Promise<{ works: string[]; covers: string[] }> {
+  const q = new URLSearchParams({ title, fields: 'key,cover_i', limit: '10' });
+  if (author) q.set('author', author);
+  const d = await fetchJson(`https://openlibrary.org/search.json?${q}`);
+  const docs: any[] = d?.docs ?? [];
+  return {
+    works: docs.map((x) => x.key).filter(Boolean),
+    covers: docs.filter((x) => x.cover_i > 0).map((x) => olCover(x.cover_i)),
+  };
+}
+
+async function googleCovers(title: string, author: string): Promise<string[]> {
+  const q = `intitle:"${title}"` + (author ? ` inauthor:"${author}"` : '');
+  const d = await fetchJson(
+    `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=30&printType=books`,
+  );
+  const out: string[] = [];
+  for (const item of d?.items ?? []) {
+    const l = item.volumeInfo?.imageLinks;
+    const u = l?.thumbnail ?? l?.smallThumbnail;
+    if (u) out.push(u.replace('&edge=curl', ''));
+  }
+  return out;
+}
+
+/** Apple Books (iTunes Search API, free, no key). Covers are upsized to 600px. */
+async function appleCovers(title: string, author: string): Promise<string[]> {
+  const term = encodeURIComponent(`${title} ${author}`.trim());
+  const d = await fetchJson(`https://itunes.apple.com/search?term=${term}&media=ebook&entity=ebook&limit=25`);
+  const t = title.toLowerCase();
+  return (d?.results ?? [])
+    .filter((r: any) => r.artworkUrl100 && String(r.trackName ?? '').toLowerCase().includes(t))
+    .map((r: any) => String(r.artworkUrl100).replace(/\/\d+x\d+bb\./, '/600x900bb.'));
+}
+
 /**
- * Search online for possible covers (other editions, other sources).
- * Returns image URLs, best guesses first.
+ * Search online for possible covers: every Open Library edition of the book,
+ * Apple Books, and Google Books. Best guesses first.
  */
 export async function findCovers(opts: { isbn13?: string | null; title: string; author?: string }): Promise<string[]> {
-  const title = opts.title.trim();
+  const title = mainTitle(opts.title);
   const author = (opts.author ?? '').trim();
+  const lastName = author.split(/\s+/).pop() ?? '';
+
+  const [isbnCover, isbnWork, search, apple, google] = await Promise.all([
+    opts.isbn13 ? openLibraryCoverByIsbn(opts.isbn13) : Promise.resolve(null),
+    opts.isbn13 ? openLibraryWorkForIsbn(opts.isbn13) : Promise.resolve(null),
+    title ? openLibrarySearch(title, author) : Promise.resolve({ works: [], covers: [] }),
+    title ? appleCovers(title, author) : Promise.resolve([]),
+    title ? googleCovers(title, author) : Promise.resolve([]),
+  ]);
+
+  // Editions of the matching work(s): the richest source of alternative covers.
+  const workKeys = [...new Set([isbnWork, ...search.works.slice(0, 2)].filter(Boolean) as string[])];
+  const editionCovers = (await Promise.all(workKeys.map(openLibraryWorkCovers))).flat();
+
+  let more: string[] = [];
+  const soFar = new Set([isbnCover, ...editionCovers, ...search.covers, ...apple, ...google].filter(Boolean));
+  if (soFar.size < 6 && title) {
+    // Loosen up: title only, or title + last name.
+    const [a, b] = await Promise.all([
+      openLibrarySearch(title, '').then((r) => r.covers),
+      googleCovers(title, lastName !== author ? lastName : ''),
+    ]);
+    more = [...a, ...b];
+  }
+
   const urls: string[] = [];
-  const add = (u?: string | null) => {
+  for (const u of [isbnCover, ...apple.slice(0, 4), ...editionCovers, ...search.covers, ...google, ...apple.slice(4), ...more]) {
     const h = https(u);
     if (h && !urls.includes(h)) urls.push(h);
-  };
-
-  const tasks: Promise<void>[] = [];
-  if (opts.isbn13) tasks.push(openLibraryCoverByIsbn(opts.isbn13).then(add));
-
-  if (title) {
-    const q = new URLSearchParams({ title, fields: 'cover_i', limit: '15' });
-    if (author) q.set('author', author);
-    tasks.push(
-      fetchJson(`https://openlibrary.org/search.json?${q}`).then((d) => {
-        for (const doc of d?.docs ?? []) if (doc.cover_i > 0) add(`https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`);
-      }),
-    );
-    const g = `intitle:${title}` + (author ? `+inauthor:${author}` : '');
-    tasks.push(
-      fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(g)}&maxResults=20`).then((d) => {
-        for (const item of d?.items ?? []) {
-          const l = item.volumeInfo?.imageLinks;
-          add((l?.thumbnail ?? l?.smallThumbnail)?.replace('&edge=curl', ''));
-        }
-      }),
-    );
   }
-  await Promise.all(tasks);
-  return urls.slice(0, 30);
+  return urls.slice(0, 60);
 }
+
+/** Opens a Google Images search for the book in the phone's browser. */
+export const webImageSearchUrl = (title: string, author: string) =>
+  `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${mainTitle(title)} ${author} book cover`.trim())}`;
